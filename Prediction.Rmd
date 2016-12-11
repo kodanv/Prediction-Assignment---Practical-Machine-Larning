@@ -1,0 +1,165 @@
+---
+title: "Prediction Assignment"
+author: "Anvar Kodirov"
+date: "December 10, 2016"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## Introduction
+
+In this assignment we are looking to predict a physical activity type from the data measurements taken by electronic activity tracking devices such as Jawbone Up, Nike FuelBand, and Fitbit.  Our goal is  to use data from accelerometers on the belt, forearm, arm, and dumbbell of 6 participants. The participants were asked to perform barbell lifts correctly and incorrectly in 5 different ways. 
+
+The training data for this project are available here:
+
+https://d396qusza40orc.cloudfront.net/predmachlearn/pml-training.csv
+
+The test data are available here:
+
+https://d396qusza40orc.cloudfront.net/predmachlearn/pml-testing.csv
+
+You can find more information on the following website: http://groupware.les.inf.puc-rio.br/har (see the section on the Weight Lifting Exercise Dataset).
+
+Velloso, E.; Bulling, A.; Gellersen, H.; Ugulino, W.; Fuks, H. Qualitative Activity Recognition of Weight Lifting Exercises. Proceedings of 4th International Conference in Cooperation with SIGCHI (Augmented Human '13) . Stuttgart, Germany: ACM SIGCHI, 2013.
+Read more: http://groupware.les.inf.puc-rio.br/har#weight_lifting_exercises#ixzz4SUwVpxW1
+
+
+## Loading Data and Libraries. 
+Downloading Libraries 
+
+```{r, message = F}
+
+library(caret)
+library(randomForest)
+library(rpart.plot)
+library(rattle)
+```
+
+Reading the original dataset csv files preloaded to the local directory
+
+```{r , echo=FALSE}
+training<-read.csv("pml-training.csv")
+testing<-read.csv("pml-testing.csv")
+dim(training)
+```
+Verifying dimensions of both training and testing datasets
+
+```{r }
+dim(training)
+dim(testing)
+```
+
+The training data frame has both empty and "NA" fields
+We are replacing empty fields with "NA" and then sub-setting the training data frame with only columns that do not have "NA" fields.
+```{r}
+
+training2<-training
+training2[training2==""]<-NA
+training3<-training2[, !colSums(is.na(training2))]
+dim(training3)
+```
+Number of columns went down from 160 do 60.
+
+## Partitioning into training and model validation subsets
+
+Setting a seed. Randomly dividing the training set into training and validation subsets in 75/25 proportion and over variable Classe that we are going to predict. Reformatting the testing set to have same column names as the training and validation subsets.
+```{r}
+set.seed(222)
+inTrain<-createDataPartition(training3$classe, p = 0.75)[[1]]
+training_final<-training3[inTrain,]
+validation<-training3[-inTrain,]
+testing_final<-testing[, !colSums(is.na(training2))]
+```
+
+We still need to delete first 7 columns as they do not have actual measurements related to the physical activity. Let's delete those columns.
+
+```{r}
+testing_final<-testing_final[,8:60]
+training_final<-training_final[,8:60]
+validation<-validation[,8:60]
+```
+
+Variable Classe have five unique values: 
+
+```{r}
+unique(training_final$classe)
+```
+
+## Fitting the models
+
+Let's fit Random Forest model with n=1000 trees
+```{r}
+rf_fit<-randomForest(classe~., data = training_final, ntree=1000)
+```
+
+Now we check the predictions with the RF fit we just evaluated: 
+
+```{r}
+rf_result<-predict(rf_fit, validation)
+```
+The accuracy and out-of-error rate of the RF Fit:
+```{r}
+accuracy<-confusionMatrix(rf_result, validation$classe)$overall[1]
+```
+Accuracy is: `r accuracy`
+Out-of-sample error rate: `r 1-accuracy`
+
+And overall the Confusion Matrix of the fit:
+
+```{r}
+confusionMatrix(rf_result, validation$classe)
+```
+
+With 52 variables our model fit is far from being parsimonious.
+Let's plot the RF tree with use of rpart package:
+
+```{r}
+rf <- rpart(classe~., data=training_final, method="class")
+prp(rf)
+```
+
+in the above plot of the tree we can see 14 important predictors:
+
+roll_belt + pitch_forearm +magnet_dumbbell + total_accel_dumbb + accel_forearm_x + magnet_dumbbell_z + yaw_belt + roll_forearm + pitch_belt + magnetbelt_z +accel_dumbbell_z + yaw_forearm + roll_dumbell + magnet_forearm_z
+
+Let's refit the model with this lesser set of the predictors""
+
+```{r}
+rf_fit2<-randomForest(classe ~ roll_belt + pitch_forearm +magnet_dumbbell_y + total_accel_dumbbell + accel_forearm_x + magnet_dumbbell_z + yaw_belt + roll_forearm + pitch_belt + magnet_belt_z +accel_dumbbell_z + yaw_forearm + roll_dumbbell + magnet_forearm_z, data = training_final, ntree=1000)
+rf_result2<-predict(rf_fit2, validation)
+confusionMatrix(rf_result2, validation$classe)$overall[1]
+```
+The accuracy seems to be still almost as high. But, the model is much more parsimonious now.
+
+Let's check importance of all the 52 variables:
+
+```{r}
+
+Imps<-data.frame(varImp(rf_fit))
+Imps$Vars<-row.names(Imps)
+rownames(Imps)<-NULL
+Imps[order(Imps$Overall, decreasing = T),]
+```
+
+Here is a plot of the variables vs their importance (Gini):
+
+```{r}
+
+varImpPlot(rf_fit,type=2)
+```
+
+For a comparison, we can take the first 14 variables with highest importance and fit into the new model:
+
+```{r}
+rf_fit3<-randomForest(classe ~roll_belt + pitch_belt + yaw_belt + +total_accel_belt + gyros_belt_x + gyros_belt_y + gyros_belt_z + magnet_belt_x + magnet_belt_y + magnet_belt_z + roll_arm , data = training_final, ntree=1000)
+rf_result3<-predict(rf_fit3, validation)
+confusionMatrix(rf_result3, validation$classe)$overall[1]
+```
+The Accuracy is much lower now. Looks like a good fit is not about individual "importance", but rather about a good joint "fit". A better "Team-work" of the predictors is more important ?
+
+## Summary
+
+Using predictors plotted by Rpart package Random Forest tree yielded the highest accuracy `r accuracy` and lowest out-of-sample error rate `r 1-accuracy`. Whereas, taking variables with highest importance according to VarImp function yielded less impressive results. Both the Random Forest model and quality of the activity measurements contributed to the high accuracy of the prediction. 
